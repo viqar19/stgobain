@@ -1,0 +1,111 @@
+---
+  - debug:
+       msg: "list item recieved ===================== {{ list_item }} "
+
+  - name: check if user alread exists or not
+    shell: "cat /etc/passwd|grep -w {{ list_item.UserID }}|wc -l"
+    register: user_output
+    ignore_errors: true
+  - set_fact:
+          var_uid_new: "{{ (user_output.stdout == '0')|ternary(true,false) }}"
+  - debug:
+       msg: "user output ===================== {{ user_output }} var_uid_new {{ var_uid_new }}"
+  - name: Split secondary groups in list
+    set_fact:
+         secondarygrouplist: "{{ list_item.Secondarygroup.split('|') }}"
+    when:
+            -   list_item.Secondarygroup|length > 0
+  - set_fact:
+       var_age_date: "{{ list_item.Age_date| default(None) }}"
+    when:
+       - list_item.Age_date is defined and list_item.Age_date|length >0 and list_item.Age_date|regex_search('^[0-9]+$')
+  - debug:
+       msg: " Age date is numberic {{ list_item.Age_date|default(None)|regex_search('^[0-9]') }}"       
+  - name: add user with/without homedirectory
+    user:
+        name: "{{ list_item.UserID }}"
+        group: "{{ list_item.Groups|default(omit,true) }}"
+        password: "{{  list_item.Password }}"
+        comment: "{{ list_item.Label }}"
+        groups: "{{ secondarygrouplist |default(omit,true) }}"
+        home: "{{ list_item.Homedirectory |default(omit,true)  }}"
+        expires: "{{ var_age_date| default(omit,true) }}"
+        append: true
+        state: present
+    register: user_add_result
+    ignore_errors: true
+    when:
+        - var_uid_new
+  - name: Force password change on first login
+    shell: "chage -d0 {{ list_item.UserID }}"
+    register: shellresult
+    when:
+        - var_uid_new
+        - user_add_result.changed  
+  - debug:
+      msg: "==========shell commands result ==== {{ shellresult| default([]) }} "    
+
+  - debug:
+          msg: "========================user add result ========== {{ user_add_result }}"
+
+  - name: Fix home directories ownership
+    file:
+       path: "{{ user_add_result.home }}"
+       owner: "{{ user_add_result.name }}"
+    when:
+         - var_uid_new and user_add_result is defined and user_add_result.home is defined and user_add_result.changed == true
+
+  - name: Check if the mail directory created and ownership
+    stat:
+         path: "/var/spool/mail/{{ user_add_result.name }}"
+    register: statofmaildir
+    when:
+      - var_uid_new and user_add_result is defined and user_add_result.changed == true
+
+  - debug:
+          msg: "Status {{ statofmaildir.stat.exists }}"
+    when:
+      - var_uid_new and user_add_result is defined and user_add_result.changed == true
+
+  - name: Fix mail ownership
+    file:
+        path: "/var/spool/mail/{{ user_add_result.name }}"
+        owner: "{{ user_add_result.name }}"
+    when:
+      - var_uid_new and user_add_result is defined and user_add_result.changed == true and statofmaildir is defined and statofmaildir.stat is defined and statofmaildir.stat.exists
+
+  - debug:
+      msg: " user_add_result =============== {{ user_add_result }} "
+  - set_fact:
+            var_output_txt: "{{ var_output_txt+ list_item[keysitem]+', ' }}"
+    loop: "{{ var_csv_fields.split(',') }}"   
+    loop_control:
+        loop_var: keysitem
+    when:
+         var_uid_new    
+  - debug:
+       msg: " new output:{{ var_output_txt }}"      
+
+
+  - set_fact:
+       var_output_txt: "{{ var_output_txt+ 'User added successfully' + '\n' }}"       
+    when:
+       - var_uid_new and user_add_result is defined and user_add_result.changed == true 
+       - user_add_result.stderr is not defined or (user_add_result.stderr is defined and user_add_result.stderr|length == 0)
+
+  - set_fact:
+       only_secondarygrpchange_list: "{{ only_secondarygrpchange_list | default([]) | union([list_item]) }}"
+    when:
+       - var_uid_new == false 
+
+
+  - set_fact:
+       var_output_txt: "{{ var_output_txt+ 'User not created Error:' + user_add_result.msg +'\n' }}"
+    when:
+       - var_uid_new and user_add_result.msg is defined and user_add_result.changed == false
+
+  - set_fact:
+         var_output_txt: "{{ var_output_txt + 'User created but errors -- ' +  user_add_result.stderr|replace('\n', ' ') | replace('\r', ' ')|replace('\t',' ')  + '\n' }}"
+    when:
+         - var_uid_new and user_add_result.stderr is defined and user_add_result.stderr|length > 0  and user_add_result.changed == true
+

@@ -1,0 +1,46 @@
+---
+  - name: check if user alread exists or not
+    shell: "cat /etc/passwd|grep -w {{ list_item.UserID }}|wc -l"
+    register: user_output
+    ignore_errors: true
+
+  - debug:
+          msg: "user output ===================== {{ user_output }} "
+  - set_fact:
+          var_uid_exists: "{{ (user_output.stdout == '1')|ternary(true,false) }}"
+  - name: change label of existing user 
+    user:
+      name: "{{ list_item.UserID }}"
+      comment: "{{ list_item.Label }}"
+      update_password: always
+    register: label_change_result
+    ignore_errors: true
+    when:
+      - var_uid_exists 
+
+  - debug:
+      msg: "================Label change result ==== {{ label_change_result| default([]) }} "
+
+  - set_fact:
+       var_output_txt: "{{ var_output_txt+ list_item[keysitem]+', ' }}"
+    loop: "{{ var_csv_fields.split(',') }}"   
+    loop_control:
+       loop_var: keysitem
+  - debug:
+       msg: " new output:{{ var_output_txt }}"      
+
+
+  - set_fact:
+       var_output_txt: "{{ var_output_txt+ 'Label Change Successful' + '\n' }}"
+    when:
+       - var_uid_exists
+       - label_change_result.changed is defined and user_output.changed 
+  - set_fact:
+      var_output_txt: "{{ var_output_txt+ 'Userid doesnt exist' + '\n' }}"         
+    when: 
+      - var_uid_exists == false
+  - set_fact:      
+      var_output_txt: "{{ var_output_txt+ 'Label change failed' + label_change_result.stderr|default(' ') }}"
+    when:  
+      - var_uid_exists
+      - label_change_result.failed  is defined and user_output.failed  

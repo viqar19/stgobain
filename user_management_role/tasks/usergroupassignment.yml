@@ -1,0 +1,65 @@
+---
+  - debug:
+       msg: "list item recieved ===================== {{ list_item }} "
+
+  - name: check if user alread exists or not
+    shell: "groups {{ list_item.UserID }}|cut -d ':' -f 2"
+    register: user_output
+    ignore_errors: true
+
+  - debug:
+       msg: "user output ===================== {{ user_output }} "
+  - set_fact:
+       currentgrouplist: "{{ (user_output.stdout|trim).split(' ') }}"
+    when:
+          user_output.stdout !=''
+  - name: Split secondary groups in list
+    set_fact:
+         secondarygrouplist: "{{ list_item.Secondarygroup.split('|') }}"
+    when:
+            -   list_item.Secondarygroup|length > 0
+  - name: add groups to the current user
+    user:
+        name: "{{ list_item.UserID }}"
+        groups: "{{ secondarygrouplist |default(omit,true) }}"
+        append: true
+        state: present
+    register: user_add_result
+    ignore_errors: true
+    when:
+        - user_output.stdout != ''
+  - set_fact:
+        var_output_txt: "{{ var_output_txt+ list_item[keysitem]+', ' }}"
+    loop: "{{ var_csv_fields.split(',') }}"   
+    loop_control:
+                loop_var: keysitem
+  - debug:
+        msg: " new output:{{ var_output_txt }}"      
+
+
+  - set_fact:
+       var_output_txt: "{{ var_output_txt+ 'User id exists and added to group Successfully' + '\n' }}"
+    when:
+       - user_add_result is defined and user_add_result.changed == True
+       - user_output.stdout !=''
+
+  - set_fact:
+       var_output_txt: "{{ var_output_txt+ 'Group doesnt exist' + '\n' }}"
+    when:
+       - user_add_result.msg is defined and user_add_result.msg.find("Group does not exist") != 1
+       - user_output.stdout !=''
+  - set_fact:
+         var_output_txt: "{{ var_output_txt+ 'user not added to the Group' + '\n' }}"
+    when:
+         - user_add_result.stderr is defined and user_add_result.changed == false
+         - user_output.stdout !=''
+
+  - set_fact:
+        var_output_txt: "{{ var_output_txt+ 'user id exists and already in Groups' + '\n' }}"
+    when:
+            - ((currentgrouplist|intersect(secondarygrouplist|default([])))|difference(secondarygrouplist|default([])))|length == 0
+            - user_output.stdout !=''  
+            - user_add_result is defined and user_add_result.changed == false  
+            - not (user_add_result.msg is defined and user_add_result.msg.find("Group does not exist") != 1)  
+  - debug:
+         msg: "currentgrouplist: {{ currentgrouplist|default([]) }} secondarygrouplist: {{ secondarygrouplist|default([]) }}"

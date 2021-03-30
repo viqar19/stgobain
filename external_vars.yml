@@ -1,0 +1,10 @@
+---
+
+var_gituserid: "{{ var_gituserid }}"
+var_gittoken: "{{ var_gittoken }}"
+var_gituseremail: "{{ vargitusermail }}"
+var_csvfilename_input: "{{ var_csvfilename|default('') }}"
+#var_password: "{{ var_password }}"
+#var_external_repo_name: "github.ibm.com/apmm-ansible/apm_iam_reports.git"
+#var_external_repo_name: "github.ibm.com/seansibl/IAM_Ansible_SchneiderElectric_Reports.git"
+var_external_repo_name: "github.ibm.com/SGCF-Automation/IAM_Automation_reports.git"

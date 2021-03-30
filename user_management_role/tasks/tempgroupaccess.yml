@@ -1,0 +1,181 @@
+---
+  - name: check if user alread exists or not
+    shell: "cat /etc/passwd|grep -w {{ list_item.UserID }}|wc -l"
+    register: user_output
+    ignore_errors: true
+
+  - debug:
+          msg: "user output ===================== {{ user_output }} "
+  - set_fact:
+          var_uid_exists: "{{ (user_output.stdout == '1')|ternary(true,false) }}"
+          var_startdateformatincorrect: true
+          var_startdatepast: true
+          var_enddateformatincorrect: true
+          var_enddatepast: true
+          var_startdate: ""
+          var_enddate: ""
+          var_currentepoch: "{{ ansible_date_time.epoch }}"
+          var_joinadd: "gpasswd -a {{ list_item.UserID }} "
+          var_joindel: "gpasswd -d {{ list_item.UserID }} "
+          var_galog: "/var/log/autogroupgccess.log"
+          #var_datestring: "{{ ansible_date_time.date +' '+ ansible_date_time.time+' '+ansible_date_time.tz }}"
+          var_datestring: '`date` '
+          var_dateoffsetseconds: 18000
+  - set_fact:
+       currentgrouplist: "{{ (user_output.stdout|trim).split(' ') }}"
+    when:
+               user_output.stdout !=''
+  - name: Split secondary groups in list
+    set_fact:
+         grouplist: "{{ list_item.Groups.split('|') }}"
+    when:
+     -   list_item.Groups|length > 0
+
+  - set_fact:
+          var_startdate: "{{ '%Y-%m-%d_%H_%M' | strftime(((list_item.EpochStartDate|default(0)|int) -var_dateoffsetseconds)|string) }}"
+          var_startdateformatincorrect: false
+          var_startdatepast: "{{ ((list_item.EpochStartDate|default(0)|int(0))<=(var_currentepoch|int(0)))|ternary(true,false) }}"
+    ignore_errors: true   
+    when:
+       - list_item.EpochStartDate is defined and list_item.EpochStartDate|length >0 and list_item.EpochStartDate|int(-1)!=-1
+  - debug:
+          msg: " Start date : {{ var_startdate }} "         
+  - set_fact:
+          var_enddate: "{{ '%Y-%m-%d_%H_%M' | strftime(((list_item.EpochEndDate|default(0)|int)-var_dateoffsetseconds)|string) }}"
+          var_enddateformatincorrect: false
+          var_enddatepast: "{{ ((list_item.EpochEndDate|default(0)|int)<=(var_currentepoch|int))|ternary(true,false) }}"
+    ignore_errors: true
+    when:
+      - list_item.EpochEndDate is defined and list_item.EpochEndDate|length >0 and list_item.EpochEndDate|int(-1)!=-1
+  - debug:
+         msg: "  End date : {{ var_enddate }} "
+  - set_fact:
+         var_startdatepast: false
+    when:
+       - var_currentepoch < list_item.EpochStartDate|default(0)         
+  - set_fact:
+       var_allgroups: "{{ grouplist|select()|list|join(',') }}"       
+       var_groupaddstring: "{{ [var_joinadd] | product(grouplist|select()) | map('join') | list |join(' && ') }}"
+       var_groupremovestring: "{{ [var_joindel] | product(grouplist|select()) | map('join') | list |join(' && ') }}"
+       var_allgroups_space: "{{ grouplist|select()|list|join(' ') }}"               
+  - name: Check if all groups exist
+    shell: "getent group {{ var_allgroups_space }} > /dev/null; echo $?"
+    register: shellgroupvalid
+
+  - debug:
+       msg: "shellgroupvalid:{{ shellgroupvalid }}"
+
+  - set_fact:
+       var_cronstartstring: "{{ 'bash -c \"echo '+ list_item.hostname + ' '+var_datestring + 'Adding User:'+ list_item.UserID +' to the Groups:'+ var_allgroups+' >> '+var_galog +' && '+var_groupaddstring+'\"' }}"
+       var_cronendstring: "{{ 'bash -c \"echo '+list_item.hostname + ' '+var_datestring + 'Remove User:'+ list_item.UserID +' from the Groups:'+ var_allgroups+' >> '+var_galog  +'  && '+var_groupremovestring +'\"'}} "
+       var_CRON_ENTRY_START: "{{ '`uname -n`: `date +%b%d%T%Z`: Adding user '+  list_item.UserID +'to the group '+var_allgroups+' >> '+var_galog }}"
+       var_CRON_ENTRY_END: "{{ '`uname -n`: `date +%b%d%T%Z`: Removing user '+  list_item.UserID +'to the group '+var_allgroups+' >> '+var_galog }}"
+       var_adjustedstartdate: "{{ list_item.EpochStartDate|default(0)|int+(ansible_loop.index0*60)-var_dateoffsetseconds }}"
+       var_adjustedenddate: "{{ list_item.EpochEndDate|default(0)|int+(ansible_loop.index0*60)-var_dateoffsetseconds }}"
+       var_adjustedremovedate: "{{ list_item.EpochEndDate|default(0)|int+(ansible_loop.length*60+300)-var_dateoffsetseconds }}"
+       var_grpvalid: "{{ shellgroupvalid.stdout |int }} "
+  - debug:
+       msg: "Groups valid: {{ var_grpvalid }} {{ var_grpvalid|int<1 }}"     
+  - debug:
+      msg: 
+         - "================All valeues "
+         - "var_startdateformatincorrect : {{ var_startdateformatincorrect }}"
+         - " var_startdatepast : {{ var_startdatepast }}"
+         - "var_enddateformatincorrect: {{ var_enddateformatincorrect }}"
+         - "var_enddatepast: {{ var_enddatepast }}"
+         - "var_startdate: {{ var_startdate }}"
+         - "var_enddate: {{ var_startdate }}"
+         - "var_currentepoch: : {{ var_currentepoch }}"  
+         - "grouplist: {{ grouplist|select()|list|join(',') }}"  
+         - "var_groupaddstring {{ var_groupaddstring }}"
+         - "var_groupremovestring {{ var_groupremovestring }}"  
+         - "Start date Month: {{ '%m' | strftime(var_adjustedstartdate|default(0)) }}"
+         - "Start date Day: {{ '%d' | strftime(var_adjustedstartdate|default(0)) }}"
+         - "Start date Hour: {{ '%H' | strftime(var_adjustedstartdate|default(0)) }}"
+         - "Start date Min: {{ '%M' | strftime(var_adjustedstartdate|default(0)) }}"
+         - "End date Month: {{ '%m' | strftime(var_adjustedenddate|default(0)) }}"
+         - "End date Day: {{ '%d' | strftime(var_adjustedenddate|default(0)) }}"
+         - "End date Hour: {{ '%H' | strftime(var_adjustedenddate|default(0)) }}"
+         - "End date Min: {{ '%M' | strftime(var_adjustedenddate|default(0)) }}"  
+         - "var_CRON_ENTRY_START : {{ var_CRON_ENTRY_START }}"  
+         - "var_CRON_ENTRY_END : {{ var_CRON_ENTRY_END }}"  
+         - "var_cronstartstring : {{ var_cronstartstring }}"
+         - "var_cronendstring : {{ var_cronendstring }}"  
+  - name: Block for Touching log file, cron jobs if condition is satisfied
+    block:
+     - name: Touch the log file, change permissions to 755
+       file:
+          path: /var/log/autogroupgccess.log
+          state: touch
+          mode: u=rwx,g=rw,o=rw    
+        
+     - set_fact:
+         var_output_txt: "{{ var_output_txt+ list_item[keysitem]+', ' }}"
+       loop: "{{ var_csv_fields.split(',') }}"   
+       loop_control:
+         loop_var: keysitem
+     - debug:
+         msg: " new output:{{ var_output_txt }}"      
+     - name: Add cron entry for adding user to the groups
+       cron:
+         name: "{{ 'Adding User:'+ list_item.UserID +' to the Groups:'+ var_allgroups }}"
+         month: "{{ '%m' | strftime(var_adjustedstartdate|default(0)) }}"
+         day: "{{ '%d' | strftime(var_adjustedstartdate|default(0)) }}"
+         minute: "{{ '%M' | strftime(var_adjustedstartdate|default(0)) }}"
+         hour: "{{ '%H' | strftime(var_adjustedstartdate|default(0)) }}"
+         user: root
+         job: "{{ var_cronstartstring }}"
+         cron_file: "{{ 'USERADD-'+ var_startdate }}"
+       register: cronstartentry   
+       #when:   
+       #- var_uid_exists==true and var_startdateformatincorrect == false and var_startdatepast==false  and var_enddateformatincorrect==false  and var_enddatepast==false  
+         
+     - name: Add cron entry for removing user from the groups
+       cron:
+         name: "{{ 'Removing User:'+ list_item.UserID +' to the Groups:'+ var_allgroups }}"
+         month: "{{ '%m' | strftime(var_adjustedenddate|default(0)) }}"
+         day: "{{ '%d' | strftime(var_adjustedenddate|default(0)) }}"
+         minute: "{{ '%M' | strftime(var_adjustedenddate|default(0)) }}"
+         hour: "{{ '%H' | strftime(var_adjustedenddate|default(0)) }}"
+         user: root
+         job: "{{ var_cronendstring }}"
+         cron_file: "{{ 'USERDEL-'+ var_enddate }}"
+       register: cronendentry   
+       #when:
+       #    - var_uid_exists==true and var_startdateformatincorrect == false and var_startdatepast==false  and var_enddateformatincorrect==false  and var_enddatepast==false       
+
+     - name: Add cron entry for removing crontab files once user is removed from group
+       cron:
+         name: "{{ 'Remove the files' }}"
+         month: "{{ '%m' | strftime(var_adjustedremovedate) }}"
+         day: "{{ '%d' | strftime(var_adjustedremovedate) }}"
+         minute: "{{ '%M' | strftime(var_adjustedremovedate) }}"
+         hour: "{{ '%H' | strftime(var_adjustedremovedate) }}"
+         user: root
+         job: "{{ 'bash -c \"rm -f /etc/cron.d/'+ 'USERADD-'+ var_startdate +' && '+ 'rm -f /etc/cron.d/'+ 'USERDEL-'+ var_enddate+'\"' }}"
+         cron_file: "{{ 'USERDEL-'+ var_enddate }}"
+       register: cronsecondentry
+      #when:
+      # - var_uid_exists==true and var_startdateformatincorrect == false and var_startdatepast==false  and var_enddateformatincorrect==false  and var_enddatepast==false 
+     - debug:
+             msg: "Cron1: {{ cronstartentry }} Cron2: {{  cronendentry }} Cron3: {{ cronsecondentry }} var_grpvalid: {{ var_grpvalid }}"      
+    when:      
+      - var_uid_exists==true  and var_grpvalid|int<1 and var_startdateformatincorrect == false and var_startdatepast==false  and var_enddateformatincorrect==false  and var_enddatepast==false
+
+  - set_fact:
+        var_output_txt: "{{ var_output_txt+ list_item[keysitem]+', ' }}"
+    loop: "{{ var_csv_fields.split(',') }}"   
+    loop_control:
+       loop_var: keysitem
+  - debug:
+          msg: " new output:{{ var_output_txt }} var_grpvalid: {{ var_grpvalid }}"      
+  - set_fact:
+       var_user_output: "{{  (var_uid_exists == true)|ternary('Userid exists,','Userid does not exist,') }}"
+       var_stdtfmt_out: "{{  (var_startdateformatincorrect == true)|ternary(' Start date format is incorrect,','Start date format is correct,') }}"
+       var_enddtfmt_out: "{{  (var_enddateformatincorrect == true)|ternary(' End date format is incorrect,','End date format is correct,') }}"
+       var_stdt_past_out: "{{  (var_startdatepast == true)|ternary('Start date is in past,','Start date is after current date,') }}"
+       var_enddt_past_out: "{{  (var_enddatepast == true)|ternary('End date is in past,','End date is after current date,') }}"
+       var_groupsvalid_str: "{{ 'All groups valid:'+((var_grpvalid|int<1)|ternary('True','False'))+','  }}"
+       var_cronadded: "{{ 'Add Entry failed:'+ cronstartentry.failed|default('failed')|string+' Remove user failed: '+cronendentry.failed|default('failed')|string+' Remove files entry failed:'+cronsecondentry.failed|default('failed')|string }}"
+  - set_fact:    
+       var_output_txt: "{{ var_output_txt+ var_user_output+var_groupsvalid_str+var_stdtfmt_out+var_enddtfmt_out+var_stdt_past_out+var_enddt_past_out +var_cronadded+'\n' }}"

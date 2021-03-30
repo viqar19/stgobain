@@ -1,0 +1,39 @@
+---
+  - debug:
+          msg: "================list_item {{ list_item }}"
+  - name: Split secondary groups in list
+    set_fact:
+           secondarygrouplist: "{{ list_item.Secondarygroup.split('|') }}"
+    when:
+      -   list_item.Secondarygroup|length > 0
+  - name: Remove group
+    group:
+      name: "{{ groupitem }}"
+      state: absent
+    loop: "{{ secondarygrouplist }}"
+    loop_control:
+            loop_var: groupitem
+    register: groupremoval_result
+    ignore_errors: true
+
+  - debug:
+      msg: "================GroupRemoval result ==== {{ groupremoval_result }} "
+  - set_fact:
+      var_output_txt: "{{ var_output_txt+ list_item[keysitem]+', ' }}"
+    loop: "{{ var_csv_fields.split(',') }}"   
+    loop_control:
+        loop_var: keysitem
+  - debug:
+      msg: " new output:{{ var_output_txt }}"      
+
+  - set_fact:        
+         var_output_txt: "{{ var_output_txt+ 'Group Name=' + groupitem.name +', Status='+ (groupitem.changed == true)|ternary('group removed','group doesnt exist or not removed') + '\n'}}"
+    loop: "{{ groupremoval_result.results }}"   
+    loop_control:
+            loop_var: groupitem
+    when:        
+             list_item.Secondarygroup|length>0
+  - set_fact:
+          var_output_txt:  "{{ var_output_txt+ 'Secondary groups not mentioned' + '\n'}}"
+    when:
+         list_item.Secondarygroup|length==0

@@ -1,0 +1,69 @@
+---
+  - debug:
+       msg: "list item recieved ===================== {{ list_item }} "
+  - name: check if user alread exists or not
+    shell: "cat /etc/passwd|grep -w {{ list_item.UserID }}|wc -l"
+    register: user_output
+    ignore_errors: true
+
+  - debug:
+        msg: "user output ===================== {{ user_output }} "
+  - set_fact:
+        var_uid_exists: "{{ (user_output.stdout >= '1')|ternary(true,false) }}"
+  - debug:
+        msg: "user exists ===================== {{ var_uid_exists }} "
+
+  - name: Block if userid exists
+    block:
+
+    - name: Get current groups of the user
+      shell: "groups {{ list_item.UserID }}|cut -d ':' -f 2"
+      register: resultgrouplist
+      ignore_errors: true
+
+    - debug:
+       msg: "resultgrouplist ===================== {{ resultgrouplist }} "
+    - set_fact:
+          currentgrouplist: "{{ (resultgrouplist.stdout|trim).split(' ') }}"
+    - debug:
+            msg: "split {{  currentgrouplist }} "
+    - name: Split secondary groups in list
+      set_fact:
+         secondarygrouplist: "{{ list_item.Secondarygroup.split('|') }}"
+      when:
+            -   list_item.Secondarygroup|length > 0
+    - debug:
+         msg: "left over groups: {{ currentgrouplist| difference(secondarygrouplist)|default('') }}"
+    - name: Change the group assignment
+      user:
+        name: "{{ list_item.UserID }}"
+        groups: "{{ currentgrouplist| difference(secondarygrouplist)|default('') }}"
+        state: present
+      register: groupassignments
+      ignore_errors: true
+    - debug:
+          msg: " groupassignments=====> {{  groupassignments }}"    
+    when:  
+        - var_uid_exists
+  - set_fact:
+        var_output_txt: "{{ var_output_txt+ list_item[keysitem]+', ' }}"
+    loop: "{{ var_csv_fields.split(',') }}"   
+    loop_control:
+                loop_var: keysitem
+  - debug:
+        msg: " new output:{{ var_output_txt }}"      
+
+  - set_fact:
+           var_output_txt: "{{ var_output_txt + 'userid doesnt exist ' + '\n' }}"
+    when:
+       - not var_uid_exists      
+  - set_fact:
+       var_output_txt: "{{ var_output_txt + 'user removed from the Groups Successfully' + '\n' }}"       
+    when:
+       -  var_uid_exists and groupassignments.changed|default('false') == true 
+
+  - set_fact:
+         var_output_txt: "{{ var_output_txt+ 'User already removed from group or error occured' + '\n' }}"
+    when:
+         - var_uid_exists and groupassignments.changed|default('false') == false
+

@@ -1,0 +1,57 @@
+---
+  - name: check if user alread exists or not
+    shell: "cat /etc/passwd|grep -w {{ list_item.UserID }}|wc -l"
+    register: user_output
+    ignore_errors: true
+
+  - debug:
+          msg: "user output ===================== {{ user_output }} "
+  - set_fact:
+          var_uid_exists: "{{ (user_output.stdout == '1')|ternary(true,false) }}"
+          var_collated_output: ""
+  - name: check groups and details     
+    shell: "groups {{ list_item.UserID }}|cut -d':' -f2"
+    register: group_output
+    ignore_errors: true
+    when:
+            - var_uid_exists
+  - name: Details Output
+    shell: "chage -l {{ list_item.UserID }} |sed -n 1,4p"
+    register: details_output
+    ignore_errors: true
+    when:
+            - var_uid_exists
+  - name: Lock Status     
+    shell: "passwd -S {{ list_item.UserID }}"
+    register: lockstatus_output
+    ignore_errors: true
+    when:
+            - var_uid_exists
+  - set_fact:
+       var_collated_output: "{{ var_collated_output+ group_output.stdout|default(' ')|replace('\n', ' ') | replace('\r', ' ')|replace('\t',' ')  }}"
+    when:
+            - var_uid_exists
+  - set_fact:
+       var_collated_output: "{{ var_collated_output+ ' Details:'+ details_output.stdout|default(' ')|replace('\n', ' ') | replace('\r', ' ')|replace('\t',' ')|replace('  ', ' ')  }}"
+    when:
+            - var_uid_exists
+  - set_fact:
+       var_collated_output: "{{ var_collated_output+ ' Id Lock status:'+lockstatus_output.stdout|default(' ')|replace('\n', ' ') | replace('\r', ' ')|replace('\t',' ')  }}"
+    when:
+            - var_uid_exists
+  - set_fact:
+       var_output_txt: "{{ var_output_txt+ list_item[keysitem]+', ' }}"
+    loop: "{{ var_csv_fields.split(',') }}"   
+    loop_control:
+       loop_var: keysitem
+  - debug:
+        msg: " new output:{{ var_output_txt }}"      
+
+  - set_fact:      
+       var_output_txt: "{{ var_output_txt+  'ID:' + list_item.UserID +' Exists, Groups :'+ var_collated_output + '\n' }}"
+    when:  
+      - var_uid_exists 
+  - set_fact:
+       var_output_txt: "{{ var_output_txt+  'ID :'+ list_item.UserID +' doesnt exist' + '\n' }}"
+    when:
+      - var_uid_exists == false
